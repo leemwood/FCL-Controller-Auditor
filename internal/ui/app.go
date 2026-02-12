@@ -2,17 +2,14 @@ package ui
 
 import (
 	"fmt"
-	"path/filepath"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
-	"github.com/tungsten-fcl/fcl-controller-auditor/internal/models"
 	"github.com/tungsten-fcl/fcl-controller-auditor/internal/repository"
 	"github.com/tungsten-fcl/fcl-controller-auditor/internal/utils"
 )
@@ -78,17 +75,28 @@ func (a *AuditorApp) setupUI() {
 	applyBtn := widget.NewButton("Apply Update", a.applyUpdate)
 	toolbar := container.NewHBox(loadZipBtn, applyBtn)
 
-	details := container.NewVBox(
+	// Right side details structure
+	infoSection := container.NewVBox(
 		widget.NewLabelWithStyle("Controller Info", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		container.NewHBox(a.IconImage, a.InfoLabel),
 		widget.NewLabelWithStyle("Preview", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		container.New(layout.NewMaxLayout(), a.Preview),
+	)
+
+	screenshotSection := container.NewVBox(
 		widget.NewLabelWithStyle("Screenshots", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		container.NewHScroll(a.ScreenshotCont),
 	)
 
+	details := container.NewBorder(
+		infoSection,
+		screenshotSection,
+		nil,
+		nil,
+		container.NewMax(a.Preview),
+	)
+
 	split := container.NewHSplit(
-		container.NewVBox(widget.NewLabel("Controllers"), a.ControllerList),
+		container.NewBorder(widget.NewLabelWithStyle("Controllers", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}), nil, nil, nil, a.ControllerList),
 		container.NewBorder(toolbar, nil, nil, nil, details),
 	)
 	split.Offset = 0.2
@@ -97,10 +105,6 @@ func (a *AuditorApp) setupUI() {
 }
 
 func (a *AuditorApp) loadController(id string) {
-	// Load from repository
-	controllerDir := filepath.Join(a.RepoMgr.RepoRoot, "repo_json", id)
-	versionPath := filepath.Join(controllerDir, "version.json")
-	
 	// Implementation for loading existing controller for comparison...
 	// For now, just clear the current package
 	a.CurrentPkg = nil

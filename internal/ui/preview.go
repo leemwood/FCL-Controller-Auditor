@@ -21,28 +21,21 @@ func NewControllerPreview(layout *models.ControllerLayout) *ControllerPreview {
 	return p
 }
 
-func (p *ControllerPreview) CreateRenderer() fyne.WidgetRenderer {
-	return &controllerPreviewRenderer{
-		preview: p,
-		objects: []fyne.CanvasObject{},
-	}
-}
-
 type controllerPreviewRenderer struct {
 	preview *ControllerPreview
 	objects []fyne.CanvasObject
+	content *fyne.Container
 }
 
 func (r *controllerPreviewRenderer) Destroy() {}
 
 func (r *controllerPreviewRenderer) Layout(size fyne.Size) {
-	r.objects = []fyne.CanvasObject{}
+	r.content.Resize(size)
 	if r.preview.Layout == nil {
+		r.content.Objects = nil
 		return
 	}
 
-	// Calculate scale to fit in the given size while maintaining a 16:9 aspect ratio (common for mobile)
-	// Or just use the full available size.
 	screenWidth := size.Width
 	screenHeight := size.Height
 
@@ -52,6 +45,7 @@ func (r *controllerPreviewRenderer) Layout(size fyne.Size) {
 		styles[s.Name] = s
 	}
 
+	var newObjects []fyne.CanvasObject
 	for _, group := range r.preview.Layout.ViewGroups {
 		if group.Visibility != "VISIBLE" {
 			continue
@@ -66,9 +60,6 @@ func (r *controllerPreviewRenderer) Layout(size fyne.Size) {
 			w, h := calculateSize(btn.BaseInfo, screenWidth, screenHeight)
 			x, y := float32(btn.BaseInfo.XPosition)*screenWidth/1000, float32(btn.BaseInfo.YPosition)*screenHeight/1000
 
-			// Adjust for center positioning if needed? FCL usually uses top-left for (x,y)
-			// but size might be centered. Let's assume (x,y) is top-left for now.
-
 			rect := canvas.NewRectangle(intToColor(style.FillColor))
 			rect.StrokeColor = intToColor(style.StrokeColor)
 			rect.StrokeWidth = float32(style.StrokeWidth) / 10
@@ -77,17 +68,30 @@ func (r *controllerPreviewRenderer) Layout(size fyne.Size) {
 
 			text := canvas.NewText(btn.Text, intToColor(style.TextColor))
 			text.Alignment = fyne.TextAlignCenter
-			text.TextSize = float32(style.TextSize)
+			text.TextSize = float32(style.TextSize) * (screenWidth / 1000) // Scale text size too
+			if text.TextSize < 8 {
+				text.TextSize = 8
+			}
 			text.Resize(fyne.NewSize(w, h))
 			text.Move(fyne.NewPos(x, y))
 
-			r.objects = append(r.objects, rect, text)
+			newObjects = append(newObjects, rect, text)
 		}
+	}
+	r.content.Objects = newObjects
+}
+
+func (p *ControllerPreview) CreateRenderer() fyne.WidgetRenderer {
+	content := container.NewWithoutLayout()
+	return &controllerPreviewRenderer{
+		preview: p,
+		content: content,
+		objects: []fyne.CanvasObject{content},
 	}
 }
 
 func (r *controllerPreviewRenderer) MinSize() fyne.Size {
-	return fyne.NewSize(320, 180) // 16:9 minimum
+	return fyne.NewSize(400, 225) // 16:9 minimum
 }
 
 func (r *controllerPreviewRenderer) Objects() []fyne.CanvasObject {
@@ -96,7 +100,7 @@ func (r *controllerPreviewRenderer) Objects() []fyne.CanvasObject {
 
 func (r *controllerPreviewRenderer) Refresh() {
 	r.Layout(r.preview.Size())
-	canvas.Refresh(r.preview)
+	r.content.Refresh()
 }
 
 func calculateSize(info models.BaseInfo, sw, sh float32) (float32, float32) {
