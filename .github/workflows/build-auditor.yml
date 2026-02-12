@@ -1,0 +1,43 @@
+name: Build FCL-Controller-Auditor
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build for ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache-dependency-path: go.sum
+
+      - name: Install dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev
+
+      - name: Build
+        run: |
+          go mod tidy
+          go build -v -o fcl-auditor-${{ matrix.os }}${{ matrix.os == 'windows-latest' && '.exe' || '' }} main.go
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fcl-auditor-${{ matrix.os }}
+          path: fcl-auditor-${{ matrix.os }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
