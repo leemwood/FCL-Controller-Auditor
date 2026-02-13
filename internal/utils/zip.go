@@ -21,6 +21,8 @@ type ParsedPackage struct {
 	IconPath     string
 	Screenshots  []string
 	TempDir      string
+	IsUpdate     bool
+	CurrentIndex *models.IndexEntry
 }
 
 func ParseControllerZip(zipPath string) (*ParsedPackage, error) {
@@ -105,30 +107,38 @@ func ParseControllerZip(zipPath string) (*ParsedPackage, error) {
 		}
 	}
 
-	// Load layout (controller.json in versions folder)
-	if pkg.VersionCode != 0 {
-		layoutPath := filepath.Join(basePath, "versions", fmt.Sprintf("%d.json", pkg.VersionCode))
-		lData, err := os.ReadFile(layoutPath)
-		if err == nil {
-			var cl models.ControllerLayout
-			if err := json.Unmarshal(lData, &cl); err == nil {
-				pkg.Layout = &cl
+	// Load layout (check all files in versions/)
+	versionsDir := filepath.Join(basePath, "versions")
+	if files, err := os.ReadDir(versionsDir); err == nil {
+		for _, f := range files {
+			if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") {
+				lData, err := os.ReadFile(filepath.Join(versionsDir, f.Name()))
+				if err == nil {
+					var layout models.ControllerLayout
+					if err := json.Unmarshal(lData, &layout); err == nil {
+						pkg.Layout = &layout
+						// Use info from layout if missing elsewhere
+						if pkg.VersionCode == 0 {
+							pkg.VersionCode = layout.VersionCode
+						}
+						break
+					}
+				}
 			}
 		}
 	}
 
-	// Icon
-	iconPath := filepath.Join(basePath, "icon.png")
-	if _, err := os.Stat(iconPath); err == nil {
-		pkg.IconPath = iconPath
+	// Find icon and screenshots
+	pkg.IconPath = filepath.Join(basePath, "icon.png")
+	if _, err := os.Stat(pkg.IconPath); os.IsNotExist(err) {
+		pkg.IconPath = ""
 	}
 
-	// Screenshots
 	screenshotDir := filepath.Join(basePath, "screenshots")
-	if entries, err := os.ReadDir(screenshotDir); err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(strings.ToLower(entry.Name()), ".png") {
-				pkg.Screenshots = append(pkg.Screenshots, filepath.Join(screenshotDir, entry.Name()))
+	if files, err := os.ReadDir(screenshotDir); err == nil {
+		for _, f := range files {
+			if !f.IsDir() && (strings.HasSuffix(f.Name(), ".png") || strings.HasSuffix(f.Name(), ".jpg")) {
+				pkg.Screenshots = append(pkg.Screenshots, filepath.Join(screenshotDir, f.Name()))
 			}
 		}
 	}

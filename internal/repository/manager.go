@@ -80,6 +80,7 @@ func (m *Manager) ApplyUpdate(pkg *utils.ParsedPackage) error {
 
 	// Copy Screenshots
 	screenshotDest := filepath.Join(destDir, "screenshots")
+	os.RemoveAll(screenshotDest)
 	os.MkdirAll(screenshotDest, 0755)
 	for _, src := range pkg.Screenshots {
 		if err := copyFile(src, filepath.Join(screenshotDest, filepath.Base(src))); err != nil {
@@ -98,7 +99,11 @@ func (m *Manager) ApplyUpdate(pkg *utils.ParsedPackage) error {
 		layoutDest := filepath.Join(destDir, "versions")
 		os.MkdirAll(layoutDest, 0755)
 		lData, _ := json.MarshalIndent(pkg.Layout, "", "  ")
-		os.WriteFile(filepath.Join(layoutDest, fmt.Sprintf("%d.json", pkg.VersionCode)), lData, 0644)
+		fileName := fmt.Sprintf("%d.json", pkg.VersionCode)
+		if pkg.VersionCode == 0 && pkg.Layout.VersionCode != 0 {
+			fileName = fmt.Sprintf("%d.json", pkg.Layout.VersionCode)
+		}
+		os.WriteFile(filepath.Join(layoutDest, fileName), lData, 0644)
 	}
 
 	// Update index.json in memory
