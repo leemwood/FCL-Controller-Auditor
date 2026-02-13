@@ -90,8 +90,57 @@ func (m *Manager) ApplyUpdate(pkg *utils.ParsedPackage) error {
 
 	// Save version.json
 	if pkg.VersionInfo != nil {
-		vData, _ := json.MarshalIndent(pkg.VersionInfo, "", "  ")
-		os.WriteFile(filepath.Join(destDir, "version.json"), vData, 0644)
+		versionPath := filepath.Join(destDir, "version.json")
+		var finalVersion models.RepoVersion
+		
+		// Try to load existing version.json
+		if existingData, err := os.ReadFile(versionPath); err == nil {
+			var existingVersion models.RepoVersion
+			if err := json.Unmarshal(existingData, &existingVersion); err == nil {
+				finalVersion = existingVersion
+				
+				// If the new version is different from current latest, move current latest to history
+				if pkg.VersionInfo.Latest.VersionCode != existingVersion.Latest.VersionCode {
+					// Check if already in history
+					existsInHistory := false
+					for _, h := range existingVersion.History {
+						if h.VersionCode == existingVersion.Latest.VersionCode {
+							existsInHistory = true
+							break
+						}
+					}
+					if !existsInHistory && existingVersion.Latest.VersionCode != 0 {
+						finalVersion.History = append(finalVersion.History, existingVersion.Latest)
+					}
+				}
+			}
+		}
+
+		// Update with new info
+		finalVersion.Latest = pkg.VersionInfo.Latest
+		finalVersion.Author = pkg.VersionInfo.Author
+		finalVersion.Description = pkg.VersionInfo.Description
+		finalVersion.Screenshot = len(pkg.Screenshots)
+		if pkg.VersionInfo.Screenshot > finalVersion.Screenshot {
+			finalVersion.Screenshot = pkg.VersionInfo.Screenshot
+		}
+
+		// Merge history from package if any (though usually ZIP only has new version)
+		for _, h := range pkg.VersionInfo.History {
+			exists := false
+			for _, eh := range finalVersion.History {
+				if eh.VersionCode == h.VersionCode {
+					exists = true
+					break
+				}
+			}
+			if !exists && h.VersionCode != finalVersion.Latest.VersionCode {
+				finalVersion.History = append(finalVersion.History, h)
+			}
+		}
+
+		vData, _ := json.MarshalIndent(finalVersion, "", "  ")
+		os.WriteFile(versionPath, vData, 0644)
 	}
 
 	// Save layout
