@@ -63,6 +63,35 @@ func (m *Manager) Save() error {
 	return nil
 }
 
+// LoadControllerDetails loads the version info and layout for a controller
+func (m *Manager) LoadControllerDetails(id string) (*models.RepoVersion, any, error) {
+	destDir := filepath.Join(m.RepoRoot, "repo_json", id)
+	versionPath := filepath.Join(destDir, "version.json")
+
+	// Load version.json
+	var version models.RepoVersion
+	vData, err := os.ReadFile(versionPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := json.Unmarshal(vData, &version); err != nil {
+		return nil, nil, err
+	}
+
+	// Load latest layout
+	layoutPath := filepath.Join(destDir, "versions", fmt.Sprintf("%d.json", version.Latest.VersionCode))
+	lData, err := os.ReadFile(layoutPath)
+	if err != nil {
+		return &version, nil, nil // Layout missing but version exists
+	}
+	var layout any
+	if err := json.Unmarshal(lData, &layout); err != nil {
+		return &version, nil, nil
+	}
+
+	return &version, layout, nil
+}
+
 func (m *Manager) ApplyUpdate(pkg *utils.ParsedPackage) error {
 	destDir := filepath.Join(m.RepoRoot, "repo_json", pkg.ControllerID)
 	
@@ -92,12 +121,16 @@ func (m *Manager) ApplyUpdate(pkg *utils.ParsedPackage) error {
 	if pkg.VersionInfo != nil {
 		versionPath := filepath.Join(destDir, "version.json")
 		var finalVersion models.RepoVersion
+		finalVersion.History = []models.Version{} // Initialize to empty slice to avoid null in JSON
 		
 		// Try to load existing version.json
 		if existingData, err := os.ReadFile(versionPath); err == nil {
 			var existingVersion models.RepoVersion
 			if err := json.Unmarshal(existingData, &existingVersion); err == nil {
 				finalVersion = existingVersion
+				if finalVersion.History == nil {
+					finalVersion.History = []models.Version{}
+				}
 				
 				// If the new version is different from current latest, move current latest to history
 				if pkg.VersionInfo.Latest.VersionCode != existingVersion.Latest.VersionCode {
@@ -155,6 +188,78 @@ func (m *Manager) ApplyUpdate(pkg *utils.ParsedPackage) error {
 		os.WriteFile(filepath.Join(layoutDest, fileName), lData, 0644)
 	}
 
+	// Ensure version.json exists and has proper structure (history must be an array, not null)
+	versionPath := filepath.Join(destDir, "version.json")
+	var finalVersion models.RepoVersion
+	finalVersion.History = []models.Version{}
+
+	// Try to load existing version.json (if any)
+	if existingData, err := os.ReadFile(versionPath); err == nil {
+		var existingVersion models.RepoVersion
+		if err := json.Unmarshal(existingData, &existingVersion); err == nil {
+			finalVersion = existingVersion
+			if finalVersion.History == nil {
+				finalVersion.History = []models.Version{}
+			}
+		}
+	}
+
+	// If package provided VersionInfo, merge/update it
+	if pkg.VersionInfo != nil {
+		// If the new version is different from current latest, move current latest to history
+		if pkg.VersionInfo.Latest.VersionCode != finalVersion.Latest.VersionCode {
+			existsInHistory := false
+			for _, h := range finalVersion.History {
+				if h.VersionCode == finalVersion.Latest.VersionCode {
+					existsInHistory = true
+					break
+				}
+			}
+			if !existsInHistory && finalVersion.Latest.VersionCode != 0 {
+				finalVersion.History = append(finalVersion.History, finalVersion.Latest)
+			}
+		}
+
+		finalVersion.Latest = pkg.VersionInfo.Latest
+		finalVersion.Author = pkg.VersionInfo.Author
+		finalVersion.Description = pkg.VersionInfo.Description
+		finalVersion.Screenshot = len(pkg.Screenshots)
+		if pkg.VersionInfo.Screenshot > finalVersion.Screenshot {
+			finalVersion.Screenshot = pkg.VersionInfo.Screenshot
+		}
+
+		// Merge history from package if any
+		for _, h := range pkg.VersionInfo.History {
+			exists := false
+			for _, eh := range finalVersion.History {
+				if eh.VersionCode == h.VersionCode {
+					exists = true
+					break
+				}
+			}
+			if !exists && h.VersionCode != finalVersion.Latest.VersionCode {
+				finalVersion.History = append(finalVersion.History, h)
+			}
+		}
+	} else {
+		// No VersionInfo in package: ensure Latest is set from layout if available
+		if finalVersion.Latest.VersionCode == 0 && pkg.Layout != nil {
+			finalVersion.Latest = models.Version{
+				VersionCode: pkg.Layout.VersionCode,
+				VersionName: pkg.Layout.Version,
+			}
+		}
+		// Ensure screenshot count is at least current screenshots
+		if finalVersion.Screenshot < len(pkg.Screenshots) {
+			finalVersion.Screenshot = len(pkg.Screenshots)
+		}
+	}
+
+	// Write back normalized version.json
+	if vData, err := json.MarshalIndent(finalVersion, "", "  "); err == nil {
+		_ = os.WriteFile(versionPath, vData, 0644)
+	}
+
 	// Update index.json in memory
 	if pkg.IndexEntry != nil {
 		found := false
@@ -174,6 +279,12 @@ func (m *Manager) ApplyUpdate(pkg *utils.ParsedPackage) error {
 }
 
 func copyFile(src, dst string) error {
+	srcAbs, _ := filepath.Abs(src)
+	dstAbs, _ := filepath.Abs(dst)
+	if srcAbs == dstAbs {
+		return nil
+	}
+
 	in, err := os.Open(src)
 	if err != nil {
 		return err

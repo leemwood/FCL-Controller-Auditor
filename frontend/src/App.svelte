@@ -1,6 +1,11 @@
 <script lang="ts">
-  import { SelectRepoRoot, SelectZip, GetImageBase64, ApplyUpdate, GetRepoIndex } from '../wailsjs/go/main/App.js'
+  import { SelectRepoRoot, SelectZip, GetImageBase64, ApplyUpdate, GetRepoIndex, GetCategories, LoadController } from '../wailsjs/go/main/App.js'
   import { onMount } from 'svelte';
+
+  interface Category {
+    id: number;
+    name: string;
+  }
 
   interface ButtonStyle {
     Name: string;
@@ -41,8 +46,16 @@
   let repoRoot = "";
   let pkg: ParsedPackage | null = null;
   let repoIndex: IndexEntry[] = [];
+  let categories: Category[] = [];
+  let selectedCategories: number[] = [];
   let iconBase64 = "";
   let screenshotsBase64: string[] = [];
+  let showApplyModal = false;
+
+  let editName = "";
+  let editIntro = "";
+  let editAuthor = "";
+  let editDescription = "";
 
   function intToRGBA(colorInt: number) {
     if (colorInt === 0) return 'transparent';
@@ -70,6 +83,7 @@
     if (res) {
       repoRoot = res;
       repoIndex = await GetRepoIndex();
+      categories = await GetCategories();
     }
   }
 
@@ -77,6 +91,7 @@
     const res = await SelectZip();
     if (res) {
       pkg = res as ParsedPackage;
+      syncEditFields();
       if (pkg.IconPath) {
         iconBase64 = await GetImageBase64(pkg.IconPath);
       }
@@ -88,10 +103,52 @@
     }
   }
 
+  async function handleSelectController(id: string) {
+    const res = await LoadController(id);
+    if (res) {
+      pkg = res as ParsedPackage;
+      syncEditFields();
+      if (pkg.IconPath) {
+        iconBase64 = await GetImageBase64(pkg.IconPath);
+      } else {
+        iconBase64 = "";
+      }
+      if (pkg.Screenshots) {
+        screenshotsBase64 = await Promise.all(
+          pkg.Screenshots.map(s => GetImageBase64(s))
+        );
+      } else {
+        screenshotsBase64 = [];
+      }
+    }
+  }
+
+  function syncEditFields() {
+    if (!pkg) return;
+    selectedCategories = pkg.IndexEntry?.categories || [];
+    editName = pkg.IndexEntry?.name || pkg.Layout?.Name || "";
+    editIntro = pkg.IndexEntry?.introduction || "";
+    editAuthor = pkg.VersionInfo?.author || pkg.Layout?.Author || "";
+    editDescription = pkg.VersionInfo?.description || pkg.Layout?.Description || "";
+  }
+
+  function openApplyModal() {
+    showApplyModal = true;
+  }
+
+  function toggleCategory(id: number) {
+    if (selectedCategories.includes(id)) {
+      selectedCategories = selectedCategories.filter(c => c !== id);
+    } else {
+      selectedCategories = [...selectedCategories, id];
+    }
+  }
+
   async function handleApply() {
     try {
-      await ApplyUpdate();
+      await ApplyUpdate(selectedCategories, editAuthor, editDescription, editName, editIntro);
       alert("Success!");
+      showApplyModal = false;
       repoIndex = await GetRepoIndex();
     } catch (e) {
       alert("Error: " + e);
@@ -107,7 +164,7 @@
     </div>
     <div class="controller-list">
       {#each repoIndex as entry}
-        <div class="controller-item" class:active={pkg?.ControllerID === entry.id}>
+        <div class="controller-item" class:active={pkg?.ControllerID === entry.id} on:click={() => handleSelectController(entry.id)}>
           <div class="item-main">
             <span class="name">{entry.name}</span>
             <span class="id">{entry.id}</span>
@@ -126,8 +183,52 @@
   <div class="content">
     <div class="toolbar">
       <button class="btn" on:click={handleSelectZip}>导入 ZIP</button>
-      <button class="btn btn-primary" on:click={handleApply} disabled={!pkg}>应用更新</button>
+      <button class="btn btn-primary" on:click={openApplyModal} disabled={!pkg}>应用更新</button>
     </div>
+
+    {#if showApplyModal}
+      <div class="modal-overlay">
+        <div class="modal">
+          <h3>编辑控件信息</h3>
+          
+          <div class="edit-fields">
+            <div class="field-group">
+              <label>名称 (Name)</label>
+              <input type="text" bind:value={editName} placeholder="控件名称" />
+            </div>
+            <div class="field-group">
+              <label>作者 (Author)</label>
+              <input type="text" bind:value={editAuthor} placeholder="作者名称" />
+            </div>
+            <div class="field-group">
+              <label>简介 (Introduction)</label>
+              <input type="text" bind:value={editIntro} placeholder="简短的一句话介绍" />
+            </div>
+            <div class="field-group">
+              <label>详细描述 (Description)</label>
+              <textarea bind:value={editDescription} placeholder="详细的功能说明"></textarea>
+            </div>
+          </div>
+
+          <p class="section-label">选择分类 (Tags)</p>
+          <div class="category-selection">
+            {#each categories as cat}
+              <button 
+                class="category-tag" 
+                class:active={selectedCategories.includes(cat.id)}
+                on:click={() => toggleCategory(cat.id)}
+              >
+                {cat.name}
+              </button>
+            {/each}
+          </div>
+          <div class="modal-actions">
+            <button class="btn" on:click={() => showApplyModal = false}>取消</button>
+            <button class="btn btn-primary" on:click={handleApply}>确认应用</button>
+          </div>
+        </div>
+      </div>
+    {/if}
 
     <div class="details">
       {#if pkg}
@@ -514,5 +615,118 @@
     align-items: center;
     justify-content: center;
     color: #8899aa;
+  }
+
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal {
+    background: #1b2636;
+    padding: 24px;
+    border-radius: 12px;
+    width: 500px;
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow-y: auto;
+    border: 1px solid #334455;
+    text-align: left;
+  }
+
+  .modal h3 {
+    margin: 0 0 16px 0;
+    color: #3498db;
+  }
+
+  .edit-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .field-group label {
+    font-size: 12px;
+    color: #8899aa;
+    text-transform: uppercase;
+    font-weight: bold;
+  }
+
+  .field-group input, .field-group textarea {
+    background: #0d141d;
+    border: 1px solid #334455;
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: white;
+    font-size: 14px;
+    outline: none;
+  }
+
+  .field-group input:focus, .field-group textarea:focus {
+    border-color: #3498db;
+  }
+
+  .field-group textarea {
+    height: 80px;
+    resize: vertical;
+  }
+
+  .section-label {
+    font-size: 12px;
+    color: #8899aa;
+    text-transform: uppercase;
+    font-weight: bold;
+    margin-bottom: 8px;
+  }
+
+  .category-selection {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 20px 0;
+  }
+
+  .category-tag {
+    padding: 6px 12px;
+    border-radius: 4px;
+    background: #2a3a4a;
+    border: 1px solid #334455;
+    color: #8899aa;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+  }
+
+  .category-tag:hover {
+    background: #34495e;
+    color: white;
+  }
+
+  .category-tag.active {
+    background: #3498db;
+    border-color: #3498db;
+    color: white;
+  }
+
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 24px;
   }
 </style>

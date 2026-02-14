@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
-	"encoding/base64"
+	"path/filepath"
+	"strings"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/tungsten-fcl/fcl-controller-auditor/internal/models"
 	"github.com/tungsten-fcl/fcl-controller-auditor/internal/repository"
 	"github.com/tungsten-fcl/fcl-controller-auditor/internal/utils"
-	"github.com/tungsten-fcl/fcl-controller-auditor/internal/models"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
@@ -86,6 +89,64 @@ func (a *App) SelectZip() (*utils.ParsedPackage, error) {
 	return pkg, nil
 }
 
+// LoadController loads an existing controller from the repository
+func (a *App) LoadController(id string) (*utils.ParsedPackage, error) {
+	if a.manager == nil {
+		return nil, fmt.Errorf("repository not selected")
+	}
+
+	version, layout, err := a.manager.LoadControllerDetails(id)
+	if err != nil {
+		return nil, err
+	}
+
+	pkg := &utils.ParsedPackage{
+		ControllerID: id,
+		VersionInfo:  version,
+		IsUpdate:     true,
+	}
+
+	if layout != nil {
+		lData, _ := json.Marshal(layout)
+		var cl models.ControllerLayout
+		json.Unmarshal(lData, &cl)
+		pkg.Layout = &cl
+		pkg.VersionCode = cl.VersionCode
+	}
+
+	if version != nil && pkg.VersionCode == 0 {
+		pkg.VersionCode = version.Latest.VersionCode
+	}
+
+	// Find in index
+	for _, entry := range a.manager.Index {
+		if entry.ID == id {
+			copyEntry := entry
+			pkg.IndexEntry = &copyEntry
+			pkg.CurrentIndex = &copyEntry
+			break
+		}
+	}
+
+	basePath := filepath.Join(a.manager.RepoRoot, "repo_json", id)
+	iconPath := filepath.Join(basePath, "icon.png")
+	if _, err := os.Stat(iconPath); err == nil {
+		pkg.IconPath = iconPath
+	}
+
+	screenshotDir := filepath.Join(basePath, "screenshots")
+	if files, err := os.ReadDir(screenshotDir); err == nil {
+		for _, f := range files {
+			if !f.IsDir() && (strings.HasSuffix(f.Name(), ".png") || strings.HasSuffix(f.Name(), ".jpg")) {
+				pkg.Screenshots = append(pkg.Screenshots, filepath.Join(screenshotDir, f.Name()))
+			}
+		}
+	}
+
+	a.pkg = pkg
+	return pkg, nil
+}
+
 // GetImageBase64 returns the base64 string of an image file
 func (a *App) GetImageBase64(path string) (string, error) {
 	data, err := os.ReadFile(path)
@@ -96,11 +157,36 @@ func (a *App) GetImageBase64(path string) (string, error) {
 }
 
 // ApplyUpdate applies the current package update to the repository
-func (a *App) ApplyUpdate() error {
+func (a *App) ApplyUpdate(selectedCategories []int, author, description, name, intro string) error {
 	if a.manager == nil || a.pkg == nil {
 		return fmt.Errorf("repo or package not selected")
 	}
+	if a.pkg.IndexEntry != nil {
+		a.pkg.IndexEntry.Categories = selectedCategories
+		if name != "" {
+			a.pkg.IndexEntry.Name = name
+		}
+		if intro != "" {
+			a.pkg.IndexEntry.Introduction = intro
+		}
+	}
+	if a.pkg.VersionInfo != nil {
+		if author != "" {
+			a.pkg.VersionInfo.Author = author
+		}
+		if description != "" {
+			a.pkg.VersionInfo.Description = description
+		}
+	}
 	return a.manager.ApplyUpdate(a.pkg)
+}
+
+// GetCategories returns the available categories from category.json
+func (a *App) GetCategories() []models.Category {
+	if a.manager == nil {
+		return nil
+	}
+	return a.manager.Categories
 }
 
 // GetRepoIndex returns the current repository index

@@ -3,11 +3,15 @@
 import {models} from '../models';
 import {utils} from '../models';
 
-export function ApplyUpdate():Promise<void>;
+export function ApplyUpdate(arg1:Array<number>,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;
+
+export function GetCategories():Promise<Array<models.Category>>;
 
 export function GetImageBase64(arg1:string):Promise<string>;
 
 export function GetRepoIndex():Promise<Array<models.IndexEntry>>;
+
+export function LoadController(arg1:string):Promise<utils.ParsedPackage>;
 
 export function SelectRepoRoot():Promise<string>;
 
